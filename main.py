@@ -69,6 +69,8 @@ class BTCprice:
 
 
 def main():
+    p = BTCprice(URL_1, URL_2, URL_3)
+
     conn = psycopg2.connect(
         host='localhost',
         password=f'{password}',
@@ -87,7 +89,6 @@ def main():
             'time': dt.now()
         }
     )
-    p = BTCprice(URL_1, URL_2, URL_3)
 
     while True:
         price_list = p.get_price()
