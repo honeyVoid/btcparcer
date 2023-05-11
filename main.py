@@ -22,74 +22,12 @@ logs = db['logs']
 
 r = redis.Redis(host='localhost', port=6379, decode_responses=True)
 
-conn = psycopg2.connect(
-    host='localhost',
-    port=5432,
-    dbname='price_db',
-    user='postgres',
-    password=f'{password}',
-)
-cursor = conn.cursor()
-cursor.execute('CREATE TABLE IF NOT EXISTS prices (burse TEXT, price NUMERICAL, timestamp TIMESTAMP)')
-conn.commit()
 
 URL_1 = 'https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT'
 URL_2 = 'https://api.kucoin.com/api/v1/market/orderbook/level1?symbol=BTC-USDT'
 URL_3 = 'https://api.bybit.com/v2/public/tickers?symbol=BTCUSD'
 
-
-
-
-# def get_binance_price(url):
-#     try:
-#         response = requests.get(url)
-#         r.set('Binance_BTCUSD', response.json().get('price'))
-#         # print(response.json().get('price'))
-#     except Exception as error:
-#         logger.error(error)
-
-#     return response.json()
-
-
-# def get_kucoin_price(url):
-#     try:
-#         response = requests.get(url)
-#         r.set('Kucoin_BTCUSD', response.json().get('data')['price'])
-#         # print(response.json().get('data')['price'])
-#     except Exception as error:
-#         logger.error(error)
-#     return response.json().get('data')
-
-
-# def get_bybit_price(url):
-#     try:
-#         response = requests.get(url)
-#         r.set('Bybit_BTCUSD',
-#               response.json().get('result')[0].get('last_price'))
-#         # print(response.json().get('result')[0].get('last_price'))
-#     except Exception as error:
-#         logger.error(error)
-#     return response.json().get('result')[0]
-
-
-# def check_instance(response):
-#     if not isinstance(response, dict):
-#         logger.error('Получен не словарь')
-#     return response
-
-
-# def main():
-#     while True:
-#         responses = (get_binance_price(URL_1),
-#                      get_kucoin_price(URL_2),
-#                      get_bybit_price(URL_3))
-#         for response in responses:
-#             check_instance(response)
-#         time.sleep(60)
-
-
-# if __name__ == '__main__':
-#     main()
+ERROR_MESSAGE = 'Resived invalid data.'
 
 
 class BTCprice:
@@ -111,25 +49,38 @@ class BTCprice:
                 }
             )
         prices = {
-            'BINANCE': response.json().get('price'),
-            'KUCOIN': response_2.json().get('data')['price'],
-            'BYBIT': response_3.json().get('result')[0].get('last_price'),
+            'BINANCE:': response.json().get('price'),
+            'KUCOIN:': response_2.json().get('data')['price'],
+            'BYBIT:': response_3.json().get('result')[0].get('last_price'),
         }
-        for burse, price in prices.values():
-            timestemp = dt.now()
-            cursor.execute(
-                'INSERT INTO prices (burse, price, timestamp) VALUES (%s, %s, %s)',
-                (burse, price, timestemp)
-            )
-            conn.commit()
-            cursor.close()
-            conn.close()
+
+        for price in prices.values():
+            if price is None or len(price) == 0:
+                logs.insert_one(
+                    {
+                        'message': ERROR_MESSAGE,
+                        'time': dt.now()
+                    }
+                )
+                raise TypeError(ERROR_MESSAGE)
+
         r.mset(prices)
-        price_list = r.mget('BINANCE', 'KUCOIN', 'BYBIT')
-        print(price_list[0])
+        return prices
 
 
 def main():
+    conn = psycopg2.connect(
+        host='localhost',
+        password=f'{password}',
+        port=5432,
+        dbname='price',
+        user='postgres',
+    )
+
+    cursor = conn.cursor()
+    cursor.execute('CREATE TABLE IF NOT EXISTS \
+                   prices (burse TEXT, price NUMERIC, timestamp TIMESTAMP)')
+
     logs.insert_one(
         {
             'message': 'Start',
@@ -137,9 +88,19 @@ def main():
         }
     )
     p = BTCprice(URL_1, URL_2, URL_3)
+
     while True:
-        p.get_price()
-        time.sleep(5)
+        price_list = p.get_price()
+        with conn.cursor() as cursor:
+            for burse, price in price_list.items():
+                timestemp = dt.now()
+                cursor.execute(
+                    'INSERT INTO prices\
+                          (burse, price, timestamp) VALUES (%s, %s, %s)',
+                    (burse, price, timestemp)
+                )
+                conn.commit()
+        time.sleep(60)
 
 
 if __name__ == '__main__':
